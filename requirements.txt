@@ -1,9 +1,11 @@
 pandas
 numpy
-requests
-pymongo
 scikit-learn
-mlflow
-streamlit
+pymongo
 python-dotenv
-pyyaml
+joblib
+openmeteo-requests
+requests-cache
+retry-requests
+fastapi
+uvicorn
