@@ -1,9 +1,9 @@
 name: Feature Pipeline
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "0 * * * *"   # Runs every hour
-  workflow_dispatch:       # Allows manual run
 
 jobs:
   run-feature-pipeline:
@@ -27,4 +27,4 @@ jobs:
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
-          python data_pipeline/ingest_features.py
+          python -m data_pipeline.ingest_features
