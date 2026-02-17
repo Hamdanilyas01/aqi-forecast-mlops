@@ -1,12 +1,12 @@
 name: Training Pipeline
 
 on:
-  schedule:
-    - cron: "0 2 * * *"   # Runs daily at 2 AM UTC
   workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"   # Daily at 2 AM UTC
 
 jobs:
-  run-training:
+  run-training-pipeline:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,4 +27,10 @@ jobs:
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
-          python training/train_models.py
+          python -m training.train_models
+
+      - name: Run Inference Pipeline
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+        run: |
+          python -m inference.predict_next_3_days

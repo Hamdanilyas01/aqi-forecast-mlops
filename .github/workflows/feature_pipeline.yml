@@ -3,49 +3,28 @@ name: Feature Pipeline
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"   # Runs every hour
+    - cron: "0 * * * *"   # Every hour
 
 jobs:
   run-feature-pipeline:
     runs-on: ubuntu-latest
 
     steps:
-      # -------------------------------------------------
-      # Checkout Repo
-      # -------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # -------------------------------------------------
-      # Setup Python
-      # -------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # -------------------------------------------------
-      # Install Dependencies
-      # -------------------------------------------------
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # -------------------------------------------------
-      # Run Feature Engineering Pipeline
-      # -------------------------------------------------
       - name: Run Feature Pipeline
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
           python -m data_pipeline.ingest_features
-
-      # -------------------------------------------------
-      # Run Inference (Generate 72-hour Forecast)
-      # -------------------------------------------------
-      - name: Run Inference Pipeline
-        env:
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-        run: |
-          python -m inference.predict_next_3_days
