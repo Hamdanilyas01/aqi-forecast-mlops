@@ -9,3 +9,4 @@ requests-cache
 retry-requests
 fastapi
 uvicorn
+shap

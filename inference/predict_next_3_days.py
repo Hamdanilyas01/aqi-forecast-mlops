@@ -1,10 +1,11 @@
 import os
 import pandas as pd
 import numpy as np
-import joblib
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import timedelta
+
+from inference.load_best_model import load_production_model
 
 # -----------------------------
 # Load Environment
@@ -30,42 +31,15 @@ df = pd.DataFrame(list(features_collection.find()))
 df.drop(columns=["_id"], inplace=True)
 df = df.sort_values("timestamp")
 
-# Use latest row as starting point
 last_row = df.iloc[-1:].copy()
 
 # -----------------------------
-# Load Best Model
+# Load Production Model
 # -----------------------------
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "GradientBoosting.pkl")
-
-model = joblib.load(MODEL_PATH)
-
-# Feature columns MUST match training
-feature_columns = [
-    "pm2_5",
-    "pm10",
-    "temperature",
-    "humidity",
-    "wind_speed",
-    "pressure",
-    "hour",
-    "day_of_week",
-    "pm2_5_lag1",
-    "pm2_5_lag3",
-    "pm2_5_lag6",
-    "pm2_5_lag12",
-    "pm2_5_lag24",
-    "pm2_5_roll_mean_3",
-    "pm2_5_roll_mean_6",
-    "pm2_5_roll_mean_12",
-    "pm2_5_roll_mean_24",
-    "pm2_5_roll_std_3",
-    "pm2_5_roll_std_6",
-]
+model, feature_columns = load_production_model()
 
 # -----------------------------
-# AQI Conversion Function
+# AQI Conversion
 # -----------------------------
 def pm25_to_aqi(pm25):
     breakpoints = [
@@ -76,12 +50,11 @@ def pm25_to_aqi(pm25):
         (150.5, 250.4, 201, 300),
     ]
 
-    for bp in breakpoints:
-        pm_low, pm_high, aqi_low, aqi_high = bp
+    for pm_low, pm_high, aqi_low, aqi_high in breakpoints:
         if pm_low <= pm25 <= pm_high:
             return ((aqi_high - aqi_low) / (pm_high - pm_low)) * (pm25 - pm_low) + aqi_low
 
-    return None
+    return 300
 
 
 def aqi_category(aqi):
@@ -101,29 +74,42 @@ def aqi_category(aqi):
 # Generate 72 Hour Forecast
 # -----------------------------
 forecast_rows = []
-
 current_row = last_row.copy()
 
-for i in range(72):
+for _ in range(72):
 
+    # Ensure correct feature order from registry
     X_input = current_row[feature_columns]
+
     predicted_pm25 = model.predict(X_input)[0]
 
-    # Update lag features manually
-    current_row["pm2_5_lag24"] = current_row["pm2_5_lag12"]
-    current_row["pm2_5_lag12"] = current_row["pm2_5_lag6"]
-    current_row["pm2_5_lag6"] = current_row["pm2_5_lag3"]
-    current_row["pm2_5_lag3"] = current_row["pm2_5_lag1"]
-    current_row["pm2_5_lag1"] = predicted_pm25
+    # Update lag chain
+    if "pm2_5_lag24" in current_row.columns:
+        current_row["pm2_5_lag24"] = current_row.get("pm2_5_lag12", current_row["pm2_5_lag24"])
+
+    if "pm2_5_lag12" in current_row.columns:
+        current_row["pm2_5_lag12"] = current_row.get("pm2_5_lag6", current_row["pm2_5_lag12"])
+
+    if "pm2_5_lag6" in current_row.columns:
+        current_row["pm2_5_lag6"] = current_row.get("pm2_5_lag3", current_row["pm2_5_lag6"])
+
+    if "pm2_5_lag3" in current_row.columns:
+        current_row["pm2_5_lag3"] = current_row.get("pm2_5_lag1", current_row["pm2_5_lag3"])
+
+    if "pm2_5_lag1" in current_row.columns:
+        current_row["pm2_5_lag1"] = predicted_pm25
 
     current_row["pm2_5"] = predicted_pm25
 
     # Update timestamp
     current_row["timestamp"] = pd.to_datetime(current_row["timestamp"]) + timedelta(hours=1)
 
-    # Update time features
-    current_row["hour"] = current_row["timestamp"].dt.hour
-    current_row["day_of_week"] = current_row["timestamp"].dt.dayofweek
+    # Update time features safely
+    if "hour" in current_row.columns:
+        current_row["hour"] = current_row["timestamp"].dt.hour
+
+    if "day_of_week" in current_row.columns:
+        current_row["day_of_week"] = current_row["timestamp"].dt.dayofweek
 
     # Convert to AQI
     predicted_aqi = pm25_to_aqi(predicted_pm25)
@@ -149,7 +135,6 @@ print("✅ 72-hour forecast stored")
 # DAILY AGGREGATION
 # -----------------------------
 forecast_df["date"] = forecast_df["timestamp"].dt.strftime("%Y-%m-%d")
-
 
 daily_df = forecast_df.groupby("date").agg({
     "predicted_pm2_5": "mean",
