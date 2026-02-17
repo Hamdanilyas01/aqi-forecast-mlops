@@ -1,70 +1,58 @@
 import streamlit as st
 import pandas as pd
-import requests
 import plotly.graph_objects as go
+from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
 from streamlit_autorefresh import st_autorefresh
-import time
 
 # --------------------------------------------------
 # PAGE CONFIG
 # --------------------------------------------------
 st.set_page_config(page_title="AQI Forecast Dashboard", layout="wide")
 
-# Dark Premium Styling + Smooth Animations
+# Dark Theme
 st.markdown("""
 <style>
-    .stApp {
-        background-color: #0E1117;
-        color: white;
-    }
-    div[data-testid="stMetric"],
-    div[data-testid="stMarkdownContainer"],
-    .stPlotlyChart {
-        transition: all 0.4s ease-in-out;
-    }
-    div[data-testid="stMetric"]:hover {
-        transform: scale(1.03);
-    }
+.stApp {
+    background-color: #0E1117;
+    color: white;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# Auto refresh every hour
 st_autorefresh(interval=3600 * 1000, key="hourly_refresh")
 
-API_URL = "http://127.0.0.1:8000"
+# --------------------------------------------------
+# LOAD ENV
+# --------------------------------------------------
+load_dotenv()
+MONGO_URI = os.getenv("MONGO_URI")
+
+client = MongoClient(MONGO_URI)
+db = client["aqi_project"]
+
+hourly_collection = db["forecast_hourly"]
+daily_collection = db["forecast_daily"]
+registry_collection = db["model_registry"]
+features_collection = db["features"]
+shap_collection = db["model_shap"]
 
 # --------------------------------------------------
 # FETCH DATA
 # --------------------------------------------------
-hourly = requests.get(f"{API_URL}/forecast/hourly").json()
-daily = requests.get(f"{API_URL}/forecast/daily").json()
-model_info = requests.get(f"{API_URL}/model/info").json()
-current_weather = requests.get(f"{API_URL}/weather/current").json()
+hourly = list(hourly_collection.find({}, {"_id": 0}))
+daily = list(daily_collection.find({}, {"_id": 0}))
+model_info = registry_collection.find_one({"is_production": True})
+current_weather = features_collection.find_one(sort=[("timestamp", -1)])
+shap_data = list(shap_collection.find({}, {"_id": 0}))
 
 hourly_df = pd.DataFrame(hourly)
 daily_df = pd.DataFrame(daily)
+shap_df = pd.DataFrame(shap_data)
 
 if not hourly_df.empty:
     hourly_df["timestamp"] = pd.to_datetime(hourly_df["timestamp"])
-
-latest = hourly_df.iloc[0]
-
-# --------------------------------------------------
-# AQI GLOW COLOR LOGIC
-# --------------------------------------------------
-def get_glow_color(aqi):
-    if aqi <= 50:
-        return "0 0 30px #00E400"
-    elif aqi <= 100:
-        return "0 0 30px #FFFF00"
-    elif aqi <= 150:
-        return "0 0 30px #FF7E00"
-    elif aqi <= 200:
-        return "0 0 30px #FF0000"
-    else:
-        return "0 0 30px #8F3F97"
-
-glow = get_glow_color(latest["predicted_aqi"])
 
 # --------------------------------------------------
 # HEADER
@@ -73,11 +61,13 @@ st.title("Karachi Air Quality Forecast")
 st.markdown("---")
 
 # --------------------------------------------------
-# CURRENT AQI + PM2.5
+# CURRENT AQI SECTION
 # --------------------------------------------------
-col1, col2 = st.columns([1,1])
+latest = hourly_df.iloc[0]
 
-# Animated Gauge
+col1, col2 = st.columns([1, 1])
+
+# AQI Gauge
 with col1:
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
@@ -85,108 +75,99 @@ with col1:
         title={'text': "Current AQI"},
         gauge={
             'axis': {'range': [0, 300]},
-            'bar': {'color': "#0A3D62"},
+            'bar': {'color': "#1f77b4"},
             'steps': [
-                {'range': [0, 50], 'color': "#1b5e20"},
-                {'range': [50, 100], 'color': "#827717"},
-                {'range': [100, 150], 'color': "#e65100"},
-                {'range': [150, 200], 'color': "#b71c1c"},
+                {'range': [0, 50], 'color': "#00E400"},
+                {'range': [50, 100], 'color': "#FFFF00"},
+                {'range': [100, 150], 'color': "#FF7E00"},
+                {'range': [150, 200], 'color': "#FF0000"},
             ],
         }
     ))
-    fig.update_layout(height=350, paper_bgcolor="#0E1117", font_color="white")
+    fig.update_layout(height=350)
     st.plotly_chart(fig, use_container_width=True)
 
-# Animated PM2.5 Card with Glow
+# PM2.5 Card (Clean Version)
 with col2:
-    pm25_placeholder = st.empty()
+    pm_value = round(latest['predicted_pm2_5'], 2)
+    category = latest['category']
 
-    for i in range(0, int(latest['predicted_pm2_5']) + 1, 2):
-        pm25_placeholder.markdown(f"""
-            <div style="
-                background-color:#1E1E1E;
-                padding:25px;
-                border-radius:12px;
-                text-align:center;
-                box-shadow:{glow};
-                transition: all 0.4s ease-in-out;">
-                <h4 style="color:#AAAAAA;">Current PM2.5</h4>
-                <h2 style="color:#4FC3F7;">
-                    {round(i,2)} µg/m³
-                </h2>
-                <p style="color:#CCCCCC;">
-                    Category: {latest['category']}
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
-        time.sleep(0.02)
-
-st.markdown("---")
+    st.subheader("PM2.5 (µg/m³)")
+    st.metric("Current PM2.5", pm_value)
+    st.markdown(f"**Status:** {category}")
 
 # --------------------------------------------------
-# HEALTH RECOMMENDATION
+# AQI HEALTH RECOMMENDATIONS
 # --------------------------------------------------
-def health_recommendation(aqi):
+def health_note(aqi):
     if aqi <= 50:
-        return "Air quality is good. Perfect for outdoor activities."
+        return "Air quality is good. Enjoy outdoor activities."
     elif aqi <= 100:
-        return "Moderate air quality. Sensitive individuals should limit prolonged outdoor exposure."
+        return "Air quality is moderate. Sensitive individuals should limit prolonged outdoor exertion."
     elif aqi <= 150:
-        return "Unhealthy for sensitive groups. Reduce outdoor activity."
+        return "Unhealthy for sensitive groups. Reduce prolonged outdoor exposure."
     elif aqi <= 200:
-        return "Unhealthy. Avoid prolonged outdoor exposure."
+        return "Unhealthy. Avoid outdoor activities."
     else:
-        return "Very unhealthy. Stay indoors."
+        return "Very unhealthy. Stay indoors and wear a mask if outside."
 
-st.markdown("### Health Recommendation")
-st.info(health_recommendation(latest["predicted_aqi"]))
+st.info(f"Health Recommendation: {health_note(latest['predicted_aqi'])}")
 
 st.markdown("---")
 
 # --------------------------------------------------
-# 72 HOUR FORECAST CHART
+# LINE CHART
 # --------------------------------------------------
 st.subheader("72-Hour Forecast")
 
 fig = go.Figure()
 
-# PM2.5
 fig.add_trace(go.Scatter(
     x=hourly_df["timestamp"],
-    y=hourly_df["predicted_pm2_5"].round(2),
+    y=hourly_df["predicted_pm2_5"],
     mode="lines",
     name="PM2.5",
-    line=dict(color="#0A3D62", dash="dot"),
-    fill="tozeroy",
-    fillcolor="rgba(10,61,98,0.15)",
+    line=dict(color="#1f77b4", dash="dot"),
 ))
 
-# AQI
 fig.add_trace(go.Scatter(
     x=hourly_df["timestamp"],
-    y=hourly_df["predicted_aqi"].round(2),
+    y=hourly_df["predicted_aqi"],
     mode="lines",
-    name="Predicted AQI",
-    line=dict(color="#4FC3F7", dash="dot"),
+    name="AQI",
+    line=dict(color="#ff7f0e", dash="dot"),
 ))
 
-fig.update_layout(
-    xaxis_title="Date & Time",
-    yaxis_title="Value",
-    height=450,
-    plot_bgcolor="#0E1117",
-    paper_bgcolor="#0E1117",
-    font_color="white"
-)
-
+fig.update_layout(height=450)
 st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
 
 # --------------------------------------------------
-# WEATHER SECTION
+# 3 DAY SUMMARY
 # --------------------------------------------------
-st.subheader("Current Weather Conditions")
+st.subheader("3-Day Summary")
+
+cols = st.columns(len(daily_df))
+
+for i, (_, row) in enumerate(daily_df.iterrows()):
+    with cols[i]:
+        st.markdown(f"""
+        <div style="background-color:#1c1f26;padding:15px;border-radius:10px;text-align:center;">
+            <h4>{row['date']}</h4>
+            <p><b>Avg AQI:</b> {round(row['avg_aqi'],2)}</p>
+            <p><b>Max:</b> {round(row['max_aqi'],2)}</p>
+            <p><b>Min:</b> {round(row['min_aqi'],2)}</p>
+            <p>{row['category']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# --------------------------------------------------
+# CURRENT WEATHER
+# --------------------------------------------------
+st.subheader("Current Weather")
 
 w1, w2, w3, w4 = st.columns(4)
 
@@ -200,43 +181,33 @@ st.markdown("---")
 # --------------------------------------------------
 # MODEL INFO
 # --------------------------------------------------
-st.subheader("Model Information")
+st.subheader("Production Model")
 
 st.markdown(f"""
-    <div style="
-        background-color:#1E1E1E;
-        padding:20px;
-        border-radius:12px;">
-        <h4 style="color:#4FC3F7;">Production Model: {model_info['model_name']}</h4>
-        <p><b>RMSE:</b> {round(model_info['metrics']['RMSE'],3)}</p>
-        <p><b>MAE:</b> {round(model_info['metrics']['MAE'],3)}</p>
-        <p><b>R²:</b> {round(model_info['metrics']['R2'],3)}</p>
-    </div>
+<div style="background-color:#1c1f26;padding:20px;border-radius:12px;">
+    <h4>{model_info['model_name']}</h4>
+    <p><b>RMSE:</b> {round(model_info['metrics']['RMSE'],3)}</p>
+    <p><b>MAE:</b> {round(model_info['metrics']['MAE'],3)}</p>
+    <p><b>R²:</b> {round(model_info['metrics']['R2'],3)}</p>
+</div>
 """, unsafe_allow_html=True)
 
-#shap
 st.markdown("---")
-st.subheader("Model Feature Importance (SHAP)")
 
-shap_data = requests.get(f"{API_URL}/model/shap").json()
-shap_df = pd.DataFrame(shap_data)
+# --------------------------------------------------
+# SHAP FEATURE IMPORTANCE
+# --------------------------------------------------
+st.subheader("Feature Importance (SHAP)")
 
 if not shap_df.empty:
-    fig = go.Figure()
+    shap_df = shap_df.sort_values("importance", ascending=True)
 
-    fig.add_trace(go.Bar(
+    fig = go.Figure(go.Bar(
         x=shap_df["importance"],
         y=shap_df["feature"],
         orientation="h",
-        marker=dict(color="#4FC3F7")
+        marker=dict(color="#1f77b4")
     ))
 
-    fig.update_layout(
-        height=500,
-        yaxis=dict(autorange="reversed"),
-        plot_bgcolor="#0E1117",
-        paper_bgcolor="#0E1117",
-        font_color="white"
-    )
-
+    fig.update_layout(height=500)
     st.plotly_chart(fig, use_container_width=True)
