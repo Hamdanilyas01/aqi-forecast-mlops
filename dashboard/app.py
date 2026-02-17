@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from pymongo import MongoClient
 import os
-from dotenv import load_dotenv
 from streamlit_autorefresh import st_autorefresh
 
 # --------------------------------------------------
@@ -26,8 +25,8 @@ st_autorefresh(interval=3600 * 1000, key="hourly_refresh")
 # --------------------------------------------------
 # LOAD ENV
 # --------------------------------------------------
-load_dotenv()
-MONGO_URI = os.getenv("MONGO_URI")
+MONGO_URI = st.secrets["MONGO_URI"]
+
 
 client = MongoClient(MONGO_URI)
 db = client["aqi_project"]

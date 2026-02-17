@@ -10,3 +10,5 @@ retry-requests
 fastapi
 uvicorn
 shap
+streamlit
+streamlit-autorefresh
