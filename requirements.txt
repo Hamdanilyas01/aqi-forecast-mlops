@@ -12,3 +12,4 @@ uvicorn
 shap
 streamlit
 streamlit-autorefresh
+plotly
