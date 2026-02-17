@@ -28,7 +28,9 @@ daily_collection.delete_many({})
 # Load Latest Features
 # -----------------------------
 df = pd.DataFrame(list(features_collection.find()))
-df.drop(columns=["_id"], inplace=True)
+if "_id" in df.columns:
+    df.drop(columns=["_id"], inplace=True)
+
 df = df.sort_values("timestamp")
 
 last_row = df.iloc[-1:].copy()
