@@ -13,4 +13,4 @@ shap
 streamlit
 streamlit-autorefresh
 plotly
-altair
+altair==4.2.2
