@@ -13,3 +13,4 @@ shap
 streamlit
 streamlit-autorefresh
 plotly
+altair
